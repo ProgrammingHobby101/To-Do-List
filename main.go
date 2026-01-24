@@ -29,7 +29,7 @@ func handler(request events.LambdaFunctionURLRequest) (events.LambdaFunctionURLR
 	var response events.LambdaFunctionURLResponse
 
 	switch path {
-	case "/api/hello":
+	case "/api/health":
 		response = handleHello()
 	case "/api/greet":
 		response = handleGreet(apiKey)
