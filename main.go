@@ -29,9 +29,9 @@ func handler(request events.LambdaFunctionURLRequest) (events.LambdaFunctionURLR
 	var response events.LambdaFunctionURLResponse
 
 	switch path {
-	case "/api/health":
+	case "/api/health": //HEAD method
 		response = handleHello()
-	case "/api/greet":
+	case "/api/to-do-list": //POST method
 		response = handleGreet(apiKey)
 	default:
 		response = events.LambdaFunctionURLResponse{StatusCode: 404, Body: "Not Found"}
