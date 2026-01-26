@@ -1,0 +1,18 @@
+Billing
+-------------------
+- Choose what type of billing(Pay per request or provision billing).
+
+To-Do List
+-------------------
+- connect database
+- create users table first in database. Then create Projects table. Then Project-Items table.
+- Data fields; Task Title, Due Date/Time, Status (e.g., Not Started, In Progress, Done), and Priority level
+- How to deploy micro lambda's
+- add projects per user in projects table
+- make DBase in same region as Lambda (save money)
+
+
+Security
+---------------
+- DDOS (rate limiting, throttling)
+
