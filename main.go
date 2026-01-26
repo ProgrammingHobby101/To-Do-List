@@ -1,13 +1,14 @@
+// source: main.go@"Lambda Code (Using events)" ; https://chatgpt.com/c/6975761d-148c-8327-85fd-15c01dc752c4
+
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"log"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/aws"
+
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -20,153 +21,62 @@ type User struct {
 	Password string `json:"password" dynamodbav:"password"`
 }
 
-var dbClient *dynamodb.Client // DynamoDB client
-var tableName1 string = "Users"
-var tableName2 string = "Projects"
-var tableName3 string = "Project_Items"
+var tableName = "To-Do-List-Users"
 
-// runs on cold-starts. init function to initialize DynamoDB client
-// Runs once per container (cold start)
-func init() {
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		log.Fatal("unable to load AWS SDK config:", err)
-	}
-
-	dbClient = dynamodb.NewFromConfig(cfg)
-}
-
-func main() {
-	lambda.Start(handler)
-}
-
-func jsonResponse(code int, body any) (events.APIGatewayV2HTTPResponse, error) {
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return events.APIGatewayV2HTTPResponse{
-			StatusCode: 500,
-			Body:       `{"error":"json marshal failed"}`,
-		}, nil
-	}
-
-	return events.APIGatewayV2HTTPResponse{
-		StatusCode: code,
-		Headers: map[string]string{
-			"Content-Type": "application/json",
-		},
-		Body: string(jsonBody),
-	}, nil
-}
-func handleHello() events.APIGatewayV2HTTPResponse {
-	return events.APIGatewayV2HTTPResponse{
-		StatusCode: 204,
-	}
-}
-func createUser(
+func handler(
 	ctx context.Context,
-	request events.APIGatewayV2HTTPRequest,
-) (events.APIGatewayV2HTTPResponse, error) {
+	request events.APIGatewayProxyRequest,
+) (events.APIGatewayProxyResponse, error) {
 
+	// Parse JSON body
 	var user User
-
-	// Parse JSON
-	if err := json.Unmarshal([]byte(request.Body), &user); err != nil {
-		return jsonResponse(400, map[string]string{
-			"error": "invalid json",
-		})
+	err := json.Unmarshal([]byte(request.Body), &user)
+	if err != nil {
+		return clientError(400, "Invalid JSON body")
 	}
 
-	// Validate fields
-	if user.UserID == "" || user.Name == "" || user.Email == "" {
-		return jsonResponse(400, map[string]string{
-			"error": "missing fields",
-		})
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return serverError(err)
 	}
 
-	// Convert to DynamoDB item
+	client := dynamodb.NewFromConfig(cfg)
+
 	item, err := attributevalue.MarshalMap(user)
 	if err != nil {
-		log.Println("Marshal error:", err)
-		return jsonResponse(500, map[string]string{
-			"error": "marshal failed",
-		})
+		return serverError(err)
 	}
 
-	// Write to DynamoDB
-	_, err = dbClient.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(tableName1),
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: &tableName,
 		Item:      item,
 	})
-
 	if err != nil {
-		log.Println("PutItem error:", err)
-		return jsonResponse(500, map[string]string{
-			"error": "dynamodb error",
-		})
+		return serverError(err)
 	}
 
-	// Optional API Key check
-	apiKey := request.Headers["x-api-key"]
-	if apiKey != "valid_key" {
-		return events.APIGatewayV2HTTPResponse{
-			StatusCode: 401,
-			Body:       "Unauthorized",
-		}, nil
-	}
-
-	return jsonResponse(201, map[string]string{
-		"message": "User created successfully",
-	})
+	return events.APIGatewayProxyResponse{
+		StatusCode: 201,
+		Body:       "User created successfully",
+	}, nil
 }
 
-// Helper
-// func clientError(code int, msg string) (events.LambdaFunctionURLResponse, error) {
-// 	body, _ := json.Marshal(map[string]string{"error": msg})
-// 	return events.LambdaFunctionURLResponse{
-// 		StatusCode: code,
-// 		Body:       string(body),
-// 	}, nil
-// }
+func clientError(code int, msg string) (events.APIGatewayProxyResponse, error) {
+	return events.APIGatewayProxyResponse{
+		StatusCode: code,
+		Body:       msg,
+	}, nil
+}
 
-// Helper
-// func serverError() (events.LambdaFunctionURLResponse, error) {
-// 	body, _ := json.Marshal(map[string]string{"error": "Internal Server Error"})
-// 	return events.LambdaFunctionURLResponse{
-// 		StatusCode: 500,
-// 		Body:       string(body),
-// 	}, nil
-// }
-
-// Helper
-// func response(code int, body any) (events.LambdaFunctionURLResponse, error) {
-// 	jsonBody, _ := json.Marshal(body)
-
-//		return events.LambdaFunctionURLResponse{
-//			StatusCode: code,
-//			Headers: map[string]string{
-//				"Content-Type": "application/json",
-//			},
-//			Body: string(jsonBody),
-//		}, nil
-//	}
-func handler(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	path := request.RequestContext.HTTP.Path
-	method := request.RequestContext.HTTP.Method
-
-	var response events.APIGatewayV2HTTPResponse
-
-	switch method + " " + path {
-	case "HEAD /api/to-do-list/mypost/health": //HEAD method
-		return handleHello(), nil
-	case "POST /api/to-do-list/mypost/users": //POST method
-		response, _ = createUser(ctx, request)
-	default:
-		return events.APIGatewayV2HTTPResponse{
-			StatusCode: 404,
-			Body:       "Not Found",
-		}, nil
-	}
-
-	return response, nil
+func serverError(err error) (events.APIGatewayProxyResponse, error) {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 500,
+		Body:       err.Error(),
+	}, nil
+}
+func main() {
+	// if val := os.Getenv("TABLE_NAME"); val != "" {
+	// 	tableName = val
+	// }
+	lambda.Start(handler)
 }
