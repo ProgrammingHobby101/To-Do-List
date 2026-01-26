@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -24,6 +25,10 @@ var (
 type User struct {
 	UserID   string `json:"userId" dynamodbav:"userId"`
 	Name     string `json:"name" dynamodbav:"name"`
+	Email    string `json:"email" dynamodbav:"email"`
+	Password string `json:"password" dynamodbav:"password"`
+}
+type LoginUser struct {
 	Email    string `json:"email" dynamodbav:"email"`
 	Password string `json:"password" dynamodbav:"password"`
 }
@@ -53,9 +58,8 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 		return createUser(ctx, req)
 	case "HEAD /api/to-do-list/mypost/health": //HEAD method
 		return handleHello(ctx, req)
-	case "GET /api/to-do-list/mypost/users": //HEAD method
-		return getUser(ctx, req)
-
+	case "GET /api/to-do-list/mypost/users": //GET method
+		return loginUser(ctx, req)
 	case "OPTIONS /api/to-do-list/mypost/users":
 		return response(200, map[string]string{"message": "ok"})
 
@@ -80,6 +84,12 @@ func createUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events
 		return response(400, map[string]string{"error": "invalid json"})
 	}
 
+	// Trim whitespace from all string fields
+	user.UserID = strings.TrimSpace(user.UserID)
+	user.Name = strings.TrimSpace(user.Name)
+	user.Email = strings.TrimSpace(user.Email)
+	user.Password = strings.TrimSpace(user.Password)
+
 	if user.UserID == "" || user.Name == "" || user.Email == "" || user.Password == "" {
 		return response(400, map[string]string{"error": "missing fields"})
 	}
@@ -99,40 +109,59 @@ func createUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events
 		return response(500, map[string]string{"error": "dynamodb error"})
 	}
 
-	return response(201, map[string]string{"message": "user created"})
+	return response(201, map[string]string{"message": "user " + user.Name + " created"})
 }
 
 // ---------------- GET USER ----------------
 
-func getUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+func loginUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	var login LoginUser
 
-	userID := req.QueryStringParameters["userId"]
-
-	if userID == "" {
-		return response(400, map[string]string{"error": "userId required"})
+	// Parse JSON body into LoginUser struct
+	if err := json.Unmarshal([]byte(req.Body), &login); err != nil {
+		return response(400, map[string]string{"error": "invalid JSON"})
 	}
 
-	result, err := dbClient.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]types.AttributeValue{
-			"userId": &types.AttributeValueMemberS{Value: userID},
-		},
-	})
+	email := login.Email
+	password := login.Password
+	// protect against accidental whitespace
+	email = strings.TrimSpace(email)
+	password = strings.TrimSpace(password)
 
+	if email == "" || password == "" {
+		return response(400, map[string]string{"error": "email and password required"})
+	}
+
+	// Scan table for matching email & password
+	input := &dynamodb.ScanInput{
+		TableName:        aws.String(tableName),
+		FilterExpression: aws.String("email = :email AND password = :password"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":email":    &types.AttributeValueMemberS{Value: email},
+			":password": &types.AttributeValueMemberS{Value: password},
+		},
+		Limit: aws.Int32(1),
+	}
+
+	result, err := dbClient.Scan(ctx, input)
 	if err != nil {
-		log.Println("GetItem error:", err)
+		log.Println("Scan error:", err)
 		return response(500, map[string]string{"error": "dynamodb error"})
 	}
 
-	if result.Item == nil {
-		return response(404, map[string]string{"error": "not found"})
+	if len(result.Items) == 0 {
+		// Login failed
+		return response(401, map[string]string{"error": "invalid email or password"})
 	}
 
 	var user User
-	err = attributevalue.UnmarshalMap(result.Item, &user)
-	if err != nil {
+	if err := attributevalue.UnmarshalMap(result.Items[0], &user); err != nil {
+		log.Println("Unmarshal error:", err)
 		return response(500, map[string]string{"error": "unmarshal error"})
 	}
+
+	// Remove password before returning
+	user.Password = ""
 
 	return response(200, user)
 }
