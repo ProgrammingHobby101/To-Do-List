@@ -1,14 +1,12 @@
-//source code: @"Step 3 — main.go" , https://chatgpt.com/c/69767414-0c18-8329-bf21-8a28445ee16d
-
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"log"
-	"os"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -19,14 +17,15 @@ import (
 
 var (
 	dbClient  *dynamodb.Client
-	tableName = os.Getenv("TABLE_NAME")
+	tableName = "To-Do-List-Users"
 )
 
 // ✅ Your struct
 type User struct {
-	UserID string `json:"userId" dynamodbav:"userId"`
-	Name   string `json:"name" dynamodbav:"name"`
-	Email  string `json:"email" dynamodbav:"email"`
+	UserID   string `json:"userId" dynamodbav:"userId"`
+	Name     string `json:"name" dynamodbav:"name"`
+	Email    string `json:"email" dynamodbav:"email"`
+	Password string `json:"password" dynamodbav:"password"`
 }
 
 // Runs once per container (cold start)
@@ -39,9 +38,9 @@ func init() {
 	dbClient = dynamodb.NewFromConfig(cfg)
 }
 
-func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
+func handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 
-	switch req.RequestContext.HTTP.Method {
+	switch req.HTTPMethod {
 
 	case "POST":
 		return createUser(ctx, req)
@@ -57,7 +56,7 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 }
 
 // ### 🔹 Create User (POST)
-func createUser(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
+func createUser(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 
 	var user User
 
@@ -65,7 +64,7 @@ func createUser(ctx context.Context, req events.LambdaFunctionURLRequest) (event
 		return response(400, map[string]string{"error": "invalid json"})
 	}
 
-	if user.UserID == "" || user.Name == "" || user.Email == "" {
+	if user.UserID == "" || user.Name == "" || user.Email == "" || user.Password == "" {
 		return response(400, map[string]string{"error": "missing fields"})
 	}
 
@@ -88,7 +87,9 @@ func createUser(ctx context.Context, req events.LambdaFunctionURLRequest) (event
 		"message": "user created",
 	})
 }
-func getUser(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
+
+// ### 🔹 Get User (GET)
+func getUser(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 
 	userID := req.QueryStringParameters["userId"]
 
@@ -120,14 +121,20 @@ func getUser(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 
 	return response(200, user)
 }
-func response(code int, body any) (events.LambdaFunctionURLResponse, error) {
+
+func response(code int, body any) (events.APIGatewayProxyResponse, error) {
+
 	jsonBody, _ := json.Marshal(body)
 
-	return events.LambdaFunctionURLResponse{
+	return events.APIGatewayProxyResponse{
 		StatusCode: code,
 		Headers: map[string]string{
 			"Content-Type": "application/json",
 		},
 		Body: string(jsonBody),
 	}, nil
+}
+
+func main() {
+	lambda.Start(handler)
 }

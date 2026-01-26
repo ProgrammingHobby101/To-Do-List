@@ -1,19 +1,26 @@
-// source: main.go@"Lambda Code (Using events)" ; https://chatgpt.com/c/6975761d-148c-8327-85fd-15c01dc752c4
-
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
+var (
+	dbClient  *dynamodb.Client
+	tableName = "To-Do-List-Users"
+)
+
+// ✅ Your struct
 type User struct {
 	UserID   string `json:"userId" dynamodbav:"userId"`
 	Name     string `json:"name" dynamodbav:"name"`
@@ -21,62 +28,133 @@ type User struct {
 	Password string `json:"password" dynamodbav:"password"`
 }
 
-var tableName = "To-Do-List-Users"
+// Runs once per container (cold start)
+func init() {
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("unable to load AWS SDK config:", err)
+	}
 
-func handler(
-	ctx context.Context,
-	request events.APIGatewayProxyRequest,
-) (events.APIGatewayProxyResponse, error) {
+	dbClient = dynamodb.NewFromConfig(cfg)
+}
 
-	// Parse JSON body
+func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	//debug
+	method_and_path_debug := "request method " + req.RequestContext.HTTP.Method + ". request path;" + req.RequestContext.HTTP.Path
+	log.Println("debug for handler: ", method_and_path_debug)
+
+	// prepare for switch
+	method := req.RequestContext.HTTP.Method
+	path := req.RequestContext.HTTP.Path
+
+	switch method + " " + path {
+
+	case "POST /api/to-do-list/mypost/users": //POST method
+		return createUser(ctx, req)
+	case "HEAD /api/to-do-list/mypost/health": //HEAD method
+		return handleHello(ctx, req)
+	case "GET /api/to-do-list/mypost/users": //HEAD method
+		return getUser(ctx, req)
+
+	case "OPTIONS /api/to-do-list/mypost/users":
+		return response(200, map[string]string{"message": "ok"})
+
+	default:
+		return response(405, map[string]string{
+			"error": "method not allowed",
+		})
+	}
+}
+
+func handleHello(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	return response(204, nil)
+}
+
+// ---------------- CREATE USER ----------------
+
+func createUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+
 	var user User
-	err := json.Unmarshal([]byte(request.Body), &user)
-	if err != nil {
-		return clientError(400, "Invalid JSON body")
+
+	if err := json.Unmarshal([]byte(req.Body), &user); err != nil {
+		return response(400, map[string]string{"error": "invalid json"})
 	}
 
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return serverError(err)
+	if user.UserID == "" || user.Name == "" || user.Email == "" || user.Password == "" {
+		return response(400, map[string]string{"error": "missing fields"})
 	}
-
-	client := dynamodb.NewFromConfig(cfg)
 
 	item, err := attributevalue.MarshalMap(user)
 	if err != nil {
-		return serverError(err)
+		return response(500, map[string]string{"error": "marshal failed"})
 	}
 
-	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: &tableName,
+	_, err = dbClient.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
 		Item:      item,
 	})
+
 	if err != nil {
-		return serverError(err)
+		log.Println("PutItem error:", err)
+		return response(500, map[string]string{"error": "dynamodb error"})
 	}
 
-	return events.APIGatewayProxyResponse{
-		StatusCode: 201,
-		Body:       "User created successfully",
-	}, nil
+	return response(201, map[string]string{"message": "user created"})
 }
 
-func clientError(code int, msg string) (events.APIGatewayProxyResponse, error) {
-	return events.APIGatewayProxyResponse{
+// ---------------- GET USER ----------------
+
+func getUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+
+	userID := req.QueryStringParameters["userId"]
+
+	if userID == "" {
+		return response(400, map[string]string{"error": "userId required"})
+	}
+
+	result, err := dbClient.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"userId": &types.AttributeValueMemberS{Value: userID},
+		},
+	})
+
+	if err != nil {
+		log.Println("GetItem error:", err)
+		return response(500, map[string]string{"error": "dynamodb error"})
+	}
+
+	if result.Item == nil {
+		return response(404, map[string]string{"error": "not found"})
+	}
+
+	var user User
+	err = attributevalue.UnmarshalMap(result.Item, &user)
+	if err != nil {
+		return response(500, map[string]string{"error": "unmarshal error"})
+	}
+
+	return response(200, user)
+}
+
+// ---------------- RESPONSE HELPER ----------------
+
+func response(code int, body any) (events.APIGatewayV2HTTPResponse, error) {
+
+	jsonBody, _ := json.Marshal(body)
+
+	return events.APIGatewayV2HTTPResponse{
 		StatusCode: code,
-		Body:       msg,
+		Headers: map[string]string{
+			"Content-Type":                 "application/json",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
+		},
+		Body: string(jsonBody),
 	}, nil
 }
 
-func serverError(err error) (events.APIGatewayProxyResponse, error) {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 500,
-		Body:       err.Error(),
-	}, nil
-}
 func main() {
-	// if val := os.Getenv("TABLE_NAME"); val != "" {
-	// 	tableName = val
-	// }
 	lambda.Start(handler)
 }
