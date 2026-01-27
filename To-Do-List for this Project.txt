@@ -15,4 +15,25 @@ To-Do List
 Security
 ---------------
 - DDOS (rate limiting, throttling)
+- serialize Userid
+- Extra Recommendation (Security)
+  Right now passwords are stored in plain text.
+  Next upgrade should be:
+✅ bcrypt hash passwords
+✅ store hash only
+✅ compare hash on login
+If you want, I can show you exactly how to implement that step-by-step.
 
+
+
+Password string `json:"password" dynamodbav:"password"`
+}
+
+var tableName = "To-Do-List-Users"
+
+
+
+I keep getting a 200 status code for the json body data "{"email":"shady@test.com", "password": "newtest157"}" , but for every other json data, for example "{"email":"nick@test.com", "password": "newtest1"}", I get a 500 status code and message of 
+{
+    "message": "Internal Server Error"
+}
