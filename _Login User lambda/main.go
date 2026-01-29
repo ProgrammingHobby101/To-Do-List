@@ -33,8 +33,8 @@ type User struct {
 }
 
 type LoginUser struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email" dynamodbav:"email"`
+	Password string `json:"password" dynamodbav:"password"`
 }
 
 //////////////////////
@@ -121,7 +121,10 @@ func loginUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.
 	}
 
 	if len(result.Items) == 0 {
-		return response(401, map[string]string{"error": "invalid email or password"})
+		itemsJSON, _ := json.Marshal(result.Items)
+		return response(401, map[string]string{
+			"error": "invalid email or password. result.Items: " + string(itemsJSON),
+		})
 	}
 
 	var user User
@@ -131,6 +134,8 @@ func loginUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.
 	}
 
 	user.Password = ""
+	itemsJSON, _ := json.Marshal(result.Items)
+	user.Password = "pass empty, result.Items:" + string(itemsJSON)
 
 	return response(200, user)
 }

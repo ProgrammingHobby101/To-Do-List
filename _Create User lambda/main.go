@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 var (
@@ -64,9 +63,6 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 	switch method + " " + path {
 	case "POST /api/to-do-list/mypost/users":
 		return createUser(ctx, req)
-
-	case "POST /api/to-do-list/mypost/users/login":
-		return loginUser(ctx, req)
 
 	case "HEAD /api/to-do-list/mypost/health":
 		return handleHello(ctx, req)
@@ -127,57 +123,6 @@ func createUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events
 	}
 
 	return response(201, map[string]string{"message": "user created"})
-}
-
-//////////////////////
-// LOGIN USER
-//////////////////////
-
-func loginUser(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-
-	var login LoginUser
-
-	if err := json.Unmarshal([]byte(req.Body), &login); err != nil {
-		log.Println("login unmarshal error:", err, "body:", req.Body)
-		return response(400, map[string]string{"error": "invalid JSON"})
-	}
-
-	email := strings.TrimSpace(login.Email)
-	password := strings.TrimSpace(login.Password)
-
-	if email == "" || password == "" {
-		return response(400, map[string]string{"error": "email and password required"})
-	}
-
-	input := &dynamodb.ScanInput{
-		TableName:        aws.String(tableName),
-		FilterExpression: aws.String("email = :email AND password = :password"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":email":    &types.AttributeValueMemberS{Value: email},
-			":password": &types.AttributeValueMemberS{Value: password},
-		},
-		Limit: aws.Int32(1),
-	}
-
-	result, err := dbClient.Scan(ctx, input)
-	if err != nil {
-		log.Println("Scan error:", err)
-		return response(500, map[string]string{"error": "dynamodb error"})
-	}
-
-	if len(result.Items) == 0 {
-		return response(401, map[string]string{"error": "invalid email or password"})
-	}
-
-	var user User
-	if err := attributevalue.UnmarshalMap(result.Items[0], &user); err != nil {
-		log.Println("unmarshal error:", err)
-		return response(500, map[string]string{"error": "unmarshal error"})
-	}
-
-	user.Password = ""
-
-	return response(200, user)
 }
 
 //////////////////////
